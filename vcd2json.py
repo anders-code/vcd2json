@@ -8,6 +8,8 @@ class _SignalDef:
         self._sid = sid
         self._length = length
         self._fmt = ''
+        self._fcolor = None
+        self._fenum = None
 
 
 class WaveExtractor:
@@ -119,19 +121,43 @@ class WaveExtractor:
         print("end_time   = " + str(self._end_time))
         return 0
 
-    def wave_format(self, signal_path, fmt):
+    def wave_format(self, signal_path, fmt=None, fcolor=None, fenum=None):
         """
         Set the display format of the multi-bit signal. <fmt> is
         one of the following characters. The default is 'x'.
         'b' - Binary.
         'd' - Signed decimal.
         'u' - Unsigned decimal.
-        'x' - Hexa-decimal, lowercase is used.
-        'X' - Hexa-decimal, uppercase is used.
+        'x' - Hexadecimal, lowercase is used.
+        'X' - Hexadecimal, uppercase is used.
+
+        <fcolor> is a function taking the value as a string and returning
+                 None, '=', or a color string '2' - '9'. Returning None
+                 implies using the default color '='. fcolor can also
+                 return a string, integer, or anything convertable into
+                 a string. fcolor can also be a constant or a dict
+                 instead of a function - in this case the original value
+                 will be looked up in the dict and the result will be
+                 used or the constant will be used directly.
+
+        <fenum>  is a function taking the value and returning None or
+                 the text to replace the value. Returning None implies
+                 leaving the original value unchanged. fenum can also
+                 return a string, integer, or anything convertable into
+                 a string. fenum can also be a dict - in this case the
+                 original value will be looked up in the dict and the
+                 result will be used.
+
         """
+
+        if fmt is None:
+            fmt = 'x'
+
         if fmt not in ('b', 'd', 'u', 'x', 'X'):
             raise ValueError('"{0}": Invalid format character.'.format(fmt))
         self._path_dict[signal_path]._fmt = fmt
+        self._path_dict[signal_path]._fcolor = fcolor
+        self._path_dict[signal_path]._fenum = fenum
         return 0
 
     def execute(self):
@@ -251,6 +277,30 @@ class _JsonGenerator():
 
     def create_body(self, origin, sample_dict):
 
+        def translate(f, value, defval):
+            if f is None:
+                return defval
+
+            try:
+                v = f(value)
+                if v is None:
+                    return defval
+                else:
+                    return str(v)
+            except:
+                pass
+
+            try:
+                v = f[value]
+                if v is None:
+                    return defval
+                else:
+                    return str(v)
+            except(KeyError):
+                return defval
+            except:
+                return str(f)
+
         def create_wave(samples):
             prev = None
             wave = ""
@@ -262,7 +312,7 @@ class _JsonGenerator():
                 prev = value
             return "\""+wave+"\""
 
-        def create_wave_data(samples, length, fmt):
+        def create_wave_data(samples, length, fmt, col, enu):
             prev = None
             wave = ""
             data = ""
@@ -270,8 +320,9 @@ class _JsonGenerator():
                 if value == prev:
                     wave += '.'
                 elif all([c == '0' or c == '1' for c in value]):
-                    wave += '='
-                    data += ' ' + data_format(value, length, fmt)
+                    vf = data_format(value, length, fmt)
+                    wave += translate(col, vf, '=')
+                    data += ' ' + translate(enu, vf, vf)
                 elif all([c == 'z' for c in value]):
                     wave += 'z'
                 else:
@@ -302,14 +353,16 @@ class _JsonGenerator():
             name   = self._path_dict[path]._name
             sid    = self._path_dict[path]._sid
             length = self._path_dict[path]._length
-            if length == 1:
+            col    = self._path_dict[path]._fcolor
+            if length == 1 and col is None:
                 name = "\"{0}\"".format(name).ljust(self._name_width + 2)
                 wave = create_wave(sample_dict[sid])
                 json += "    { \"name\": "+name+", \"wave\": "+wave+" }"
             else:
                 fmt = self._path_dict[path]._fmt
+                enu = self._path_dict[path]._fenum
                 name = "\"{0}\"".format(name).ljust(self._name_width + 2)
-                wave, data = create_wave_data(sample_dict[sid], length, fmt)
+                wave, data = create_wave_data(sample_dict[sid], length, fmt, col, enu)
                 json += "    { \"name\": "+name+", \"wave\": "+wave+\
                                             ", \"data\": "+data+" }"
             if i != len(self._path_list)-2:
